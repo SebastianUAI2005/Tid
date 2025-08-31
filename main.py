@@ -159,3 +159,4 @@ class SandpileAutomaton:
 if __name__ == "__main__":
     automaton = SandpileAutomaton()  # Tamaño de la matriz
     automaton.run()
+    print("hola")
