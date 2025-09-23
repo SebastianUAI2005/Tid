@@ -2,6 +2,7 @@ import numpy as np
 import random
 import tkinter as tk
 import atexit  # para guardar log al salir
+import time
 
 class SandpileAutomaton:
     def __init__(self, size=4):
@@ -59,37 +60,64 @@ class SandpileAutomaton:
         return neighbors
 
     def add_grain(self, i, j):
+        was_running = self.running
+        if self.running:
+            self.stop_simulation()  # Pausar simulación automática durante la avalancha
+    
         self.grid[i, j] += 1
-        # breve pausa para visualización
         if self.grid[i, j] >= 4:
             cells_to_collapse = [(i, j)]
             self.collapse_cell(cells_to_collapse, set())
-
+        else:
+            self.draw_grid()
+            if was_running:
+                self.start_simulation()  # Reanudar si estaba corriendo
     def collapse_cell(self, cells_to_collapse, affected_cells, original_call=True):
-        """Colapsa una celda y registra explosión"""
-        neighbors_to_collapse = []
-        
-        while cells_to_collapse:
-            i = cells_to_collapse[0][0]
-            j = cells_to_collapse[0][1]
-            self.grid[i, j] -= 4
-            if (i, j) not in affected_cells: 
-                affected_cells.add((i, j))
-            neighbors = self.get_toroidal_neighbors(i, j)
-            for ni, nj in neighbors:
-                if (ni, nj) not in affected_cells: 
-                    affected_cells.add((ni, nj))
-                self.grid[ni, nj] += 1
-                if self.grid[ni, nj] >= 4 and (ni, nj) not in neighbors_to_collapse:
-                    neighbors_to_collapse.append((ni, nj))
-            cells_to_collapse.pop(0)
+        """Colapsa celdas iterativamente con visualización paso a paso"""
+        queue = cells_to_collapse[:]
+    
+        # Función interna para procesar un paso de la avalancha
+        def process_step():
+            if queue:
+                i, j = queue.pop(0)
+            
+                if self.grid[i, j] >= 4:
+                    # Guardar estado anterior para resaltar
+                    old_value = self.grid[i, j]
+                
+                    # Realizar el colapso
+                    self.grid[i, j] -= 4
+                    affected_cells.add((i, j))
+                
+                    # Resaltar la celda que está colapsando (color diferente)
+                    self.draw_grid(highlight_cell=(i, j), old_value=old_value)
+                
+                    # Aumentar vecinos
+                    neighbors = self.get_toroidal_neighbors(i, j)
+                    for ni, nj in neighbors:
+                        self.grid[ni, nj] += 1
+                        affected_cells.add((ni, nj))
                     
-        self.draw_grid()  # actualizar la visualización después de colapsar
-       
-        if neighbors_to_collapse:
-            self.collapse_cell(neighbors_to_collapse, affected_cells, original_call=False)
-        if original_call:
-            self.explosion_log.append((len(affected_cells), np.sum(self.grid)))
+                        # Si el vecino se vuelve inestable, añadirlo a la cola
+                        if self.grid[ni, nj] >= 4 and (ni, nj) not in queue:
+                            queue.append((ni, nj))
+                
+                    # Programar el siguiente paso después de un delay
+                    self.root.after(300, process_step)  # 300 ms de delay
+                else:
+                    # Si esta celda ya no es inestable, pasar a la siguiente
+                    self.root.after(100, process_step)
+            else:
+                # Fin de la avalancha
+                self.draw_grid()
+                if original_call:
+                    self.explosion_log.append((len(affected_cells), np.sum(self.grid)))
+                # Reanudar la simulación automática si estaba corriendo
+                if self.running:
+                    self.root.after(self.update_interval, self.update)
+    
+        # Iniciar el procesamiento paso a paso
+        process_step()
         
 
     def random_step(self):
@@ -106,12 +134,16 @@ class SandpileAutomaton:
                 self.draw_grid()
                  
 
-    def draw_grid(self):
+    def draw_grid(self, highlight_cell=None, old_value=None):
         self.canvas.delete("all")
         for i in range(self.size):
             for j in range(self.size):
                 value = self.grid[i, j]
-                if value == 0:
+            
+                # Determinar color
+                if (i, j) == highlight_cell and old_value is not None:
+                    color = "orange"  # Color para resaltar la celda que está colapsando
+                elif value == 0:
                     color = "white"
                 elif value == 1:
                     color = "lightblue"
@@ -120,14 +152,25 @@ class SandpileAutomaton:
                 elif value == 3:
                     color = "darkblue"
                 else:
-                    color = "red"
+                    color = "red"  # Celdas inestables
+            
                 x1, y1 = j * self.cell_size, i * self.cell_size
                 x2, y2 = x1 + self.cell_size, y1 + self.cell_size
                 self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="gray")
+            
+                # Mostrar valor
+                text_color = "black" if value < 2 else "white"
+                if (i, j) == highlight_cell and old_value is not None:
+                    # Mostrar el cambio: valor_anterior → valor_actual
+                    text = f"{old_value}→{value}"
+                    text_color = "black"
+                else:
+                    text = str(value)
+            
                 self.canvas.create_text(x1 + self.cell_size//2, y1 + self.cell_size//2,
-                                        text=str(value), fill="black" if value < 2 else "white")
-
-        # actualizar energía total
+                                        text=text, fill=text_color)
+    
+        # Actualizar energía total
         energia_total = np.sum(self.grid)
         self.energy_label.config(text=f"Energía del sistema: {energia_total}")
 
@@ -170,5 +213,5 @@ class SandpileAutomaton:
 
 
 if __name__ == "__main__":
-    automaton = SandpileAutomaton(10)
+    automaton = SandpileAutomaton(2)
     automaton.run()
