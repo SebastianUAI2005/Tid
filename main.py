@@ -60,24 +60,37 @@ class SandpileAutomaton:
 
     def add_grain(self, i, j):
         self.grid[i, j] += 1
+        # breve pausa para visualización
         if self.grid[i, j] >= 4:
-            self.collapse_cell(i, j, set())
+            cells_to_collapse = [(i, j)]
+            self.collapse_cell(cells_to_collapse, set())
 
-    def collapse_cell(self, i, j, affected_cells):
+    def collapse_cell(self, cells_to_collapse, affected_cells, original_call=True):
         """Colapsa una celda y registra explosión"""
-        self.grid[i, j] = 0
-        affected_cells.add((i, j))
-        neighbors = self.get_toroidal_neighbors(i, j)
-        for ni, nj in neighbors:
-            self.grid[ni, nj] += 1
-        for ni, nj in neighbors:    
-            if self.grid[ni, nj] >= 4:
-                self.collapse_cell(ni, nj, affected_cells)
-
-        # Al final de la propagación registrar
-        energia_total = np.sum(self.grid)
-        if affected_cells:  
-            self.explosion_log.append((len(affected_cells), int(energia_total)))
+        neighbors_to_collapse = []
+        
+        while cells_to_collapse:
+            i = cells_to_collapse[0][0]
+            j = cells_to_collapse[0][1]
+            self.grid[i, j] -= 4
+            if (i, j) not in affected_cells: 
+                affected_cells.add((i, j))
+            neighbors = self.get_toroidal_neighbors(i, j)
+            for ni, nj in neighbors:
+                if (ni, nj) not in affected_cells: 
+                    affected_cells.add((ni, nj))
+                self.grid[ni, nj] += 1
+                if self.grid[ni, nj] >= 4 and (ni, nj) not in neighbors_to_collapse:
+                    neighbors_to_collapse.append((ni, nj))
+            cells_to_collapse.pop(0)
+                    
+        self.draw_grid()  # actualizar la visualización después de colapsar
+       
+        if neighbors_to_collapse:
+            self.collapse_cell(neighbors_to_collapse, affected_cells, original_call=False)
+        if original_call:
+            self.explosion_log.append((len(affected_cells), np.sum(self.grid)))
+        
 
     def random_step(self):
         i = random.randint(0, self.size - 1)
@@ -91,6 +104,7 @@ class SandpileAutomaton:
             if 0 <= i < self.size and 0 <= j < self.size:
                 self.add_grain(i, j)
                 self.draw_grid()
+                 
 
     def draw_grid(self):
         self.canvas.delete("all")
