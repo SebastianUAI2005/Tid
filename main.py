@@ -1,15 +1,15 @@
 import numpy as np
 import random
 import tkinter as tk
-import atexit  # para guardar log al salir
-import time
+import atexit
+from collections import OrderedDict
 
 class SandpileAutomaton:
     def __init__(self, size=4):
         self.size = size
         self.grid = np.zeros((size, size), dtype=int)
         self.root = tk.Tk()
-        self.root.title("Sandpile Automaton (Toroidal)")
+        self.root.title("Sandpile Automaton (Toroidal) - Detección de Ciclos")
 
         # Configurar canvas
         self.cell_size = 20
@@ -39,16 +39,27 @@ class SandpileAutomaton:
         self.info_label = tk.Label(self.root, text="Modo: Pausa - Haz clic en las celdas para añadir granos")
         self.info_label.pack(pady=5)
 
-        self.running = False
-        self.update_interval = 100  # ms
+        # Etiqueta de ciclo
+        self.cycle_label = tk.Label(self.root, text="Ciclo: No detectado")
+        self.cycle_label.pack(pady=5)
 
-        # Registro de explosiones (lista de tuplas: (celdas_afectadas, energia_sistema))
+        self.running = False
+        self.update_interval = 250  # ms
+
+        # Registro de explosiones
         self.explosion_log = []
+
+        # Para detección de ciclos
+        self.iteration_count = 0
+        self.config_history = OrderedDict()  # Mantiene orden de inserción
+        self.cycle_detected = False
+        self.cycle_start_iteration = 0
+        self.cycle_length = 0
 
         # Vincular evento de clic del mouse
         self.canvas.bind("<Button-1>", self.on_canvas_click)
 
-        # Guardar explosiones al salir
+        # Guardar al salir
         atexit.register(self.save_explosions_to_file)
 
     def get_toroidal_neighbors(self, i, j):
@@ -59,71 +70,96 @@ class SandpileAutomaton:
             neighbors.append((ni, nj))
         return neighbors
 
+    def grid_to_key(self):
+        """Convierte el grid en una tupla para usar como clave en el diccionario"""
+        return tuple(self.grid.flatten())
+
+    def check_for_cycle(self):
+        """Verifica si la configuración actual forma parte de un ciclo"""
+        current_key = self.grid_to_key()
+        
+        if current_key in self.config_history:
+            # ¡Ciclo detectado!
+            self.cycle_start_iteration = self.config_history[current_key]
+            self.cycle_length = self.iteration_count - self.cycle_start_iteration
+            self.cycle_detected = True
+            self.cycle_label.config(
+                text=f"¡CICLO DETECTADO! Longitud: {self.cycle_length} iteraciones"
+            )
+            return True
+        
+        # Guardar configuración actual
+        self.config_history[current_key] = self.iteration_count
+        
+        # Limitar el historial para no usar demasiada memoria
+        if len(self.config_history) > 1000:
+            self.config_history.popitem(last=False)
+        
+        return False
+
     def add_grain(self, i, j):
         was_running = self.running
         if self.running:
-            self.stop_simulation()  # Pausar simulación automática durante la avalancha
-    
+            self.stop_simulation()
+
         self.grid[i, j] += 1
+        # ❌ ELIMINAR: self.iteration_count += 1  # Esto NO es una iteración
+    
+        # Verificar ciclo después de cada cambio
+        if self.check_for_cycle():
+            print(f"¡Ciclo detectado en iteración {self.iteration_count}!")
+            print(f"Longitud del ciclo: {self.cycle_length} iteraciones")
+
         if self.grid[i, j] >= 4:
             cells_to_collapse = [(i, j)]
             self.collapse_cell(cells_to_collapse, set())
         else:
             self.draw_grid()
             if was_running:
-                self.start_simulation()  # Reanudar si estaba corriendo
+                self.start_simulation()
+
     def collapse_cell(self, cells_to_collapse, affected_cells, original_call=True):
-        """Colapsa celdas iterativamente con visualización paso a paso"""
+        """Colapsa celdas iterativamente usando una cola"""
         queue = cells_to_collapse[:]
     
-        # Función interna para procesar un paso de la avalancha
-        def process_step():
-            if queue:
-                i, j = queue.pop(0)
-            
-                if self.grid[i, j] >= 4:
-                    # Guardar estado anterior para resaltar
-                    old_value = self.grid[i, j]
-                
-                    # Realizar el colapso
-                    self.grid[i, j] -= 4
-                    affected_cells.add((i, j))
-                
-                    # Resaltar la celda que está colapsando (color diferente)
-                    self.draw_grid(highlight_cell=(i, j), old_value=old_value)
-                
-                    # Aumentar vecinos
-                    neighbors = self.get_toroidal_neighbors(i, j)
-                    for ni, nj in neighbors:
-                        self.grid[ni, nj] += 1
-                        affected_cells.add((ni, nj))
-                    
-                        # Si el vecino se vuelve inestable, añadirlo a la cola
-                        if self.grid[ni, nj] >= 4 and (ni, nj) not in queue:
-                            queue.append((ni, nj))
-                
-                    # Programar el siguiente paso después de un delay
-                    self.root.after(300, process_step)  # 300 ms de delay
-                else:
-                    # Si esta celda ya no es inestable, pasar a la siguiente
-                    self.root.after(100, process_step)
-            else:
-                # Fin de la avalancha
-                self.draw_grid()
-                if original_call:
-                    self.explosion_log.append((len(affected_cells), np.sum(self.grid)))
-                # Reanudar la simulación automática si estaba corriendo
-                if self.running:
-                    self.root.after(self.update_interval, self.update)
-    
-        # Iniciar el procesamiento paso a paso
-        process_step()
+        while queue:
+            i, j = queue.pop(0)
         
-
-    def random_step(self):
-        i = random.randint(0, self.size - 1)
-        j = random.randint(0, self.size - 1)
-        self.add_grain(i, j)
+            # Si la celda sigue siendo inestable
+            if self.grid[i, j] >= 4:
+                # Registrar antes del colapso
+                old_value = self.grid[i, j]
+            
+                # Aplicar regla de colapso → ✅ ESTO SÍ es una iteración
+                self.grid[i, j] -= 4
+                affected_cells.add((i, j))
+            
+                # ✅ CORRECTO: Incrementar contador de iteraciones SOLO aquí
+                self.iteration_count += 1
+            
+                # Aumentar vecinos
+                neighbors = self.get_toroidal_neighbors(i, j)
+                for ni, nj in neighbors:
+                    self.grid[ni, nj] += 1
+                    affected_cells.add((ni, nj))
+                
+                    if self.grid[ni, nj] >= 4 and (ni, nj) not in queue:
+                        queue.append((ni, nj))
+            
+                # Verificar ciclo después de cada iteración
+                if self.check_for_cycle():
+                    print(f"¡Ciclo detectado durante avalancha! Iteración: {self.iteration_count}")
+            
+                # Actualizar visualización
+                self.draw_grid(highlight_cell=(i, j), old_value=old_value)
+                self.root.update()
+                self.root.after(300)
+    
+        # Finalizar avalancha
+        if original_call:
+            self.explosion_log.append((len(affected_cells), np.sum(self.grid)))
+            if self.running:
+                self.root.after(self.update_interval, self.update)
 
     def on_canvas_click(self, event):
         if not self.running:  
@@ -131,18 +167,16 @@ class SandpileAutomaton:
             i = event.y // self.cell_size
             if 0 <= i < self.size and 0 <= j < self.size:
                 self.add_grain(i, j)
-                self.draw_grid()
-                 
 
     def draw_grid(self, highlight_cell=None, old_value=None):
         self.canvas.delete("all")
         for i in range(self.size):
             for j in range(self.size):
                 value = self.grid[i, j]
-            
+                
                 # Determinar color
                 if (i, j) == highlight_cell and old_value is not None:
-                    color = "orange"  # Color para resaltar la celda que está colapsando
+                    color = "orange"  # Resaltar celda en colapso
                 elif value == 0:
                     color = "white"
                 elif value == 1:
@@ -153,37 +187,41 @@ class SandpileAutomaton:
                     color = "darkblue"
                 else:
                     color = "red"  # Celdas inestables
-            
+                
                 x1, y1 = j * self.cell_size, i * self.cell_size
                 x2, y2 = x1 + self.cell_size, y1 + self.cell_size
                 self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="gray")
-            
+                
                 # Mostrar valor
                 text_color = "black" if value < 2 else "white"
                 if (i, j) == highlight_cell and old_value is not None:
-                    # Mostrar el cambio: valor_anterior → valor_actual
                     text = f"{old_value}→{value}"
                     text_color = "black"
                 else:
                     text = str(value)
-            
+                
                 self.canvas.create_text(x1 + self.cell_size//2, y1 + self.cell_size//2,
                                         text=text, fill=text_color)
-    
+        
         # Actualizar energía total
         energia_total = np.sum(self.grid)
         self.energy_label.config(text=f"Energía del sistema: {energia_total}")
+        
+        # Actualizar contador de iteraciones
+        self.info_label.config(text=f"Iteración: {self.iteration_count} - Modo: {'Ejecutando' if self.running else 'Pausa'}")
 
     def update_info_label(self):
         if self.running:
-            self.info_label.config(text="Modo: Ejecutando - La simulación está en curso")
+            self.info_label.config(text=f"Iteración: {self.iteration_count} - Modo: Ejecutando")
         else:
-            self.info_label.config(text="Modo: Pausa - Haz clic en las celdas para añadir granos")
+            self.info_label.config(text=f"Iteración: {self.iteration_count} - Modo: Pausa")
 
     def update(self):
         if self.running:
-            self.random_step()
-            self.draw_grid()
+            # Elegir celda aleatoria para añadir grano
+            i = random.randint(0, self.size - 1)
+            j = random.randint(0, self.size - 1)
+            self.add_grain(i, j)
             self.root.after(self.update_interval, self.update)
 
     def start_simulation(self):
@@ -196,8 +234,9 @@ class SandpileAutomaton:
         self.update_info_label()
 
     def single_step(self):
-        self.random_step()
-        self.draw_grid()
+        i = random.randint(0, self.size - 1)
+        j = random.randint(0, self.size - 1)
+        self.add_grain(i, j)
 
     def run(self):
         self.draw_grid()
@@ -211,7 +250,6 @@ class SandpileAutomaton:
                 f.write(f"{affected},{energia} ")
             f.write("\n")
 
-
 if __name__ == "__main__":
-    automaton = SandpileAutomaton(2)
+    automaton = SandpileAutomaton(4)  # Empezar con 2x2 para probar ciclos
     automaton.run()
