@@ -7,6 +7,7 @@ from collections import OrderedDict
 class SandpileAutomaton:
     def __init__(self, size=4):
         self.size = size
+
         self.grid = np.zeros((size, size), dtype=int)
         self.root = tk.Tk()
         self.root.title("Sandpile Automaton (Toroidal) - Detección de Ciclos")
@@ -31,6 +32,9 @@ class SandpileAutomaton:
         self.step_button = tk.Button(control_frame, text="Un Paso", command=self.single_step)
         self.step_button.pack(side=tk.LEFT, padx=5)
 
+        self.step_button = tk.Button(control_frame, text="Calcular ciclos", command=self.get_all_configurations)
+        self.step_button.pack(side=tk.LEFT, padx=5)
+
         # Etiqueta de energía total
         self.energy_label = tk.Label(self.root, text="Energía del sistema: 0")
         self.energy_label.pack(pady=5)
@@ -44,7 +48,7 @@ class SandpileAutomaton:
         self.cycle_label.pack(pady=5)
 
         self.running = False
-        self.update_interval = 250  # ms
+        self.update_interval = 1 # ms
 
         # Registro de explosiones
         self.explosion_log = []
@@ -61,6 +65,29 @@ class SandpileAutomaton:
 
         # Guardar al salir
         atexit.register(self.save_explosions_to_file)
+    def get_all_configurations(self):
+        """Genera todas las configuraciones posibles para un grid de tamaño size x size"""
+        try:
+            with open('numeros_base4.txt', 'r', encoding='utf-8') as archivo:
+                for linea in archivo:
+                    self.iteration_count = 0
+                    self.config_history.clear()
+                    # Eliminar espacios y saltos de línea
+                    numero = linea.strip()
+                    # Guardar en variable y mostrar
+                    numero_actual = numero
+                    self.grid[0,0] = 4 
+                    for i in range(self.size):
+                        for j in range(self.size):
+                            if (i,j) != (0,0):
+                                self.grid[i,j] = numero_actual[(i*self.size)+j-1]
+                            
+                    self.collapse_cell([(0,0)], set())
+                    
+        except FileNotFoundError:
+            print("Error: No se encontró el archivo 'numeros_base4.txt'")
+            print("Ejecuta primero el programa generador.")
+                
 
     def get_toroidal_neighbors(self, i, j):
         neighbors = []
@@ -86,6 +113,13 @@ class SandpileAutomaton:
             self.cycle_label.config(
                 text=f"¡CICLO DETECTADO! Longitud: {self.cycle_length} iteraciones"
             )
+            
+            with open(f'ciclos_{self.size}x{self.size}.txt', 'a', encoding='utf-8') as archivo:
+                archivo.write(f"{self.cycle_length}, ")
+                archivo.write(f"{self.cycle_start_iteration}, ")
+                archivo.write(f"{np.sum(self.grid)}, ")
+                archivo.write(f"{self.config_history}\n")
+                
             return True
         
         # Guardar configuración actual
@@ -104,11 +138,6 @@ class SandpileAutomaton:
 
         self.grid[i, j] += 1
         # ❌ ELIMINAR: self.iteration_count += 1  # Esto NO es una iteración
-    
-        # Verificar ciclo después de cada cambio
-        if self.check_for_cycle():
-            print(f"¡Ciclo detectado en iteración {self.iteration_count}!")
-            print(f"Longitud del ciclo: {self.cycle_length} iteraciones")
 
         if self.grid[i, j] >= 4:
             cells_to_collapse = [(i, j)]
@@ -148,12 +177,12 @@ class SandpileAutomaton:
             
                 # Verificar ciclo después de cada iteración
                 if self.check_for_cycle():
-                    print(f"¡Ciclo detectado durante avalancha! Iteración: {self.iteration_count}")
+                    return True
             
                 # Actualizar visualización
                 self.draw_grid(highlight_cell=(i, j), old_value=old_value)
                 self.root.update()
-                self.root.after(300)
+                self.root.after(3)
     
         # Finalizar avalancha
         if original_call:
